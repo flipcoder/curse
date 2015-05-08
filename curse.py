@@ -18,6 +18,14 @@ class Glyph:
 def draw(win, glyph, x, y):
     win.addstr(y, x, glyph.string, glyph.color)
 
+class Wrapper:
+    def __init__(self, value):
+        self.value = value
+    def get():
+        return self.value
+    def set(val):
+        self.value = val
+    
 class Signal:
     def __init__(self):
         self.slots = []
@@ -70,11 +78,10 @@ class Object(object):
         self.on_try_move(x, y, result)
 
         if result and len(target.objects) > 1:
-            cbs = []
-            for p in itertools.permutations(target.objects):
-                p[0].on_collision(p[1])
-            for cb in cbs:
-                cb()
+            post_signal = Signal()
+            for p in itertools.combinations(target.objects, 2):
+                p[0].on_collision(p[1], post_signal)
+            post_signal()
     
     def move(self, x, y):
         self.detach()
@@ -95,7 +102,7 @@ class Player(Object):
         self.on_try_move.connect(self.orient)
         self.on_collision.connect(self.collision)
 
-    def collision(self, other):
+    def collision(self, other, post_signal):
         self.hp = max(0, self.hp - 10)
         #other.hp = 0
         
