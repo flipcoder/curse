@@ -81,6 +81,7 @@ class Object(object):
             post_signal = Signal()
             for p in itertools.combinations(target.objects, 2):
                 p[0].on_collision(p[1], post_signal)
+                p[1].on_collision(p[0], post_signal)
             post_signal()
     
     def move(self, x, y):
