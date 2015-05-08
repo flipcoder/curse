@@ -4,6 +4,9 @@ import curses
 import time
 import random
 import copy
+import fcntl
+import time
+import itertools
 
 random.seed()
 
@@ -15,6 +18,15 @@ class Glyph:
 def draw(win, glyph, x, y):
     win.addstr(y, x, glyph.string, glyph.color)
 
+class Signal:
+    def __init__(self):
+        self.slots = []
+    def __call__(self, *args):
+        for slot in self.slots:
+            slot(*args)
+    def connect(self, cb):
+        self.slots += [cb]
+
 class Object(object):
     def __init__(self, glyph, world):
         self.glyph = glyph
@@ -24,27 +36,70 @@ class Object(object):
         
         self.attach()
 
+        self.on_try_move = Signal()
+        self.on_collision = Signal()
+
     def draw(self, win):
         draw(win, self.glyph)
     def draw(self, win, x, y):
         draw(win, self.glyph, x, y)
 
     def attach(self):
-        if not self in self.world.grid[self.x][self.y].objects:
-            self.world.grid[self.x][self.y].objects.append(self)
+        tile = self.world.tile(self.x,self.y)
+        if tile and not self in tile.objects:
+            tile.objects.append(self)
         
     def detach(self):
-        if self in self.world.grid[self.x][self.y].objects:
-            self.world.grid[self.x][self.y].objects.remove(self)
+        tile = self.world.tile(self.x,self.y)
+        if tile and self in tile.objects:
+            tile.objects.remove(self)
 
-    def move(self, x, y):
+    def tick(self, t):
+        pass
+
+    def try_move(self, x, y):
         target = self.world.tile(self.x + x, self.y + y)
+        result = False
         if target and not target.solid:
             self.detach()
             self.x += x
             self.y += y
             self.attach()
+            result = True
 
+        self.on_try_move(x, y, result)
+
+        if result and len(target.objects) > 1:
+            cbs = []
+            for p in itertools.permutations(target.objects):
+                p[0].on_collision(p[1])
+            for cb in cbs:
+                cb()
+    
+    def move(self, x, y):
+        self.detach()
+        self.x += x
+        self.y += y
+        self.attach()
+
+    def teleport(self, x, y):
+        self.detach()
+        self.x = x
+        self.y = y
+        self.attach()
+        
+class Player(Object):
+    def __init__(self, glyph, world):
+        super(self.__class__, self).__init__(glyph, world)
+        self.hp = 100
+        self.on_try_move.connect(self.orient)
+        self.on_collision.connect(self.collision)
+
+    def collision(self, other):
+        self.hp = max(0, self.hp - 10)
+        #other.hp = 0
+        
+    def orient(self, x, y, result):
         if x > 0:
             self.glyph.string = '>'
         elif x < 0:
@@ -54,10 +109,12 @@ class Object(object):
         elif y > 0:
             self.glyph.string = 'v'
 
-class Player(Object):
+class Monster(Object):
     def __init__(self, glyph, world):
         super(self.__class__, self).__init__(glyph, world)
-        self.hp = 100
+    def tick(self, t):
+        if random.random() <= 0.1:
+            self.try_move(random.randint(0,2) - 1, random.randint(0,2) - 1)
 
 class Tile:
     def __init__(self, glyph, **kwargs):
@@ -76,9 +133,9 @@ class Map:
         self.h = h
         line = []
         self.grid = []
-        for t in xrange(h):
-            line.append(Tile(fill))
         for t in xrange(w):
+            line.append(Tile(fill))
+        for t in xrange(h):
             self.grid.append(copy.deepcopy(line))
     
     def tile(self, x, y):
@@ -86,9 +143,10 @@ class Map:
             return None
         if x >= self.w or y >= self.h:
             return None
-        return self.grid[x][y]
+        return self.grid[y][x]
     
     def sprinkle(self, glyph, freq, **kwargs):
+        i = 0
         for row in self.grid:
             for tile in row:
                 if random.random() <= freq:
@@ -113,6 +171,9 @@ def main(win):
     TREE = Glyph('T', 5)
     curses.init_pair(5, curses.COLOR_GREEN, curses.COLOR_BLACK)
 
+    MONSTER = Glyph("M", 6)
+    curses.init_pair(6, curses.COLOR_RED, curses.COLOR_BLACK)
+    
     NOTHING = Glyph('X',10)
     curses.init_pair(10, curses.COLOR_RED, curses.COLOR_BLACK)
 
@@ -123,8 +184,34 @@ def main(win):
     
     player = Player(PLAYER, world)
 
+    objects = []
+    
+    for i in xrange(int(0.01 * world.w * world.h)):
+        p = Monster(MONSTER, world)
+        p.teleport(random.randint(0, world.w), random.randint(0, world.h))
+        objects.append(p)
+
     camera = [0,0]
+    
+    win.nodelay(1)
+    t0 = time.time()
+    accum = 0 # time accumulated since last tick
+    
+    FPS = 30.0
+    FPS_INV = 1.0 / FPS
+    
     while True:
+        
+        advance = 0
+        while True:
+            t1 = time.time()
+            accum += t1 - t0
+            t0 = t1
+            if accum > FPS_INV:
+                advance = FPS_INV
+                accum = advance - accum # rollover excess time
+                break
+            time.sleep(0.001)
         
         win_sz = win.getmaxyx()[::-1]
         view = [1, 1, win_sz[0] - 2, win_sz[1] - 3]
@@ -133,7 +220,7 @@ def main(win):
         camera[1] = player.y - view[3]/2
         
         win.erase()
-        
+
         for ix in xrange(0,view[2]):
             for iy in xrange(0,view[3]):
                 tile = world.tile(ix + camera[0], iy + camera[1])
@@ -158,13 +245,16 @@ def main(win):
             break
         
         if ch == ord('i') or ch == curses.KEY_UP:
-            player.move(0,-1)
+            player.try_move(0,-1)
         elif ch == ord('k') or ch == curses.KEY_DOWN:
-            player.move(0,1)
+            player.try_move(0,1)
         elif ch == ord('j') or ch == curses.KEY_LEFT:
-            player.move(-1,0)
+            player.try_move(-1,0)
         elif ch == ord('l') or ch == curses.KEY_RIGHT:
-            player.move(1,0)
+            player.try_move(1,0)
+
+        for obj in objects:
+            obj.tick(advance)
 
 if __name__=='__main__':
     curses.wrapper(main)
