@@ -74,13 +74,27 @@ class Object(object):
     def tick(self, t):
         pass
 
+    def can_pass(self, x, y):
+        t = tile(x,y)
+        return t and self.can_pass(t)
+        
+    def can_pass(self, tile):
+        assert tile
+        return not tile.solid
+        
+    def move(self, x, y):
+        assert self.attached()
+        self.detach()
+        self.x += x
+        self.y += y
+        self.attach()
+        
     def try_move(self, x, y):
-        if not self.attached():
-            return False
+        assert self.attached()
         
         target = self.world.tile(self.x + x, self.y + y)
         result = False
-        if target and not target.solid:
+        if target and self.can_pass(target):
             self.detach()
             self.x += x
             self.y += y
@@ -97,16 +111,51 @@ class Object(object):
             post_signal()
     
     def move(self, x, y):
+        assert self.attached()
         self.detach()
         self.x += x
         self.y += y
         self.attach()
 
     def teleport(self, x, y):
+        assert self.attached()
         self.detach()
         self.x = x
         self.y = y
         self.attach()
+
+    def random_teleport(self):
+        done = False
+        while True:
+            # pick a random tile
+            rx = random.randint(0, self.world.w - 1)
+            ry = random.randint(0, self.world.h - 1)
+            t = self.world.tile(rx, ry)
+            
+            # attempt to nudge it a few times into a non-solid area
+            attempts = 0
+            while attempts < 20:
+                if self.can_pass(t) and not t.objects:
+                    done = True
+                
+                rx += random.randint(0,2)-1
+                ry += random.randint(0,2)-1
+                (rx, ry) = self.world.snap(rx, ry)
+                t = self.world.tile(rx, ry)
+                attempts += 1
+            
+            if done:
+                break
+        
+        self.teleport(rx,ry)
+            
+    def current_tile(self):
+        assert self.attached()
+        return self.world.tile(self.x, self.y)
+    
+    def immediate_tile(self, x, y):
+        assert self.attached()
+        return self.world.tile(self.x + x,  self.y + y)
         
 class Player(Object):
     def __init__(self, name, glyph, world):
@@ -154,13 +203,6 @@ class Player(Object):
                 if target:
                     self.last_pickup = None # clear pickup messages
         
-        
-    def current_tile(self):
-        return self.world.tile(self.x, self.y)
-    
-    def immediate_tile(self, x, y):
-        return self.world.tile(self.x + x,  self.y + y)
-        
     def hiding(self):
         t = self.current_tile()
         return t and t.conceal
@@ -190,6 +232,9 @@ class Monster(Object):
     def tick(self, t):
         if random.random() <= 0.1:
             self.try_move(random.randint(0,2) - 1, random.randint(0,2) - 1)
+    def can_pass(self, tile):
+        # prevent monsters from moving over tiles that can conceal player
+        return super(self.__class__, self).can_pass(tile) and not tile.conceal
 
 class Tile:
     def __init__(self, glyph, **kwargs):
@@ -229,8 +274,18 @@ class Map:
                     tile.glyph = glyph
                     tile.properties(**kwargs)
 
+    def snap(self, x, y):
+        x = max(0, min(x, self.w-1))
+        y = max(0, min(y, self.h-1))
+        return (x,y)
+        
 def main(win):
     curses.curs_set(0)
+    win_sz = win.getmaxyx()[::-1]
+    
+    text = "Loading..."
+    win.addstr(win_sz[1]/2, win_sz[0]/2 - len(text)/2, text)
+    win.refresh()
     
     PLAYER = Glyph('v',1)
     curses.init_pair(1, curses.COLOR_BLACK, curses.COLOR_WHITE)
@@ -257,7 +312,7 @@ def main(win):
     curses.init_pair(10, curses.COLOR_RED, curses.COLOR_BLACK)
     curses.init_pair(11, curses.COLOR_YELLOW, curses.COLOR_BLACK)
 
-    world = Map("The Forest", 100, 100, GRASS)
+    world = Map("The Forest", 300, 300, GRASS)
     world.sprinkle(ROCK, 0.01, solid=True, name="rock")
     world.sprinkle(BUSH, 0.02, conceal=True, name="bush")
     world.sprinkle(TREE, 0.02, solid=True, name="tree")
@@ -266,16 +321,16 @@ def main(win):
     
     for i in xrange(int(0.01 * world.w * world.h)):
         p = Monster("monster", MONSTER, world)
-        p.teleport(random.randint(0, world.w), random.randint(0, world.h))
+        p.random_teleport()
         objects.append(p)
     
     for i in xrange(int(0.001 * world.w * world.h)):
         p = Item("gold coin", GOLD, world)
-        p.teleport(random.randint(0, world.w), random.randint(0, world.h))
+        p.random_teleport()
         objects.append(p)
 
     player = Player("Player", PLAYER, world)
-    player.teleport(random.randint(0, world.w), random.randint(0, world.h))
+    player.random_teleport()
 
     camera = [0,0]
     
@@ -305,7 +360,7 @@ def main(win):
         camera[0] = player.x - view[2]/2
         camera[1] = player.y - view[3]/2
         
-        win.erase()
+        win.refresh()
 
         for ix in xrange(0,view[2]):
             for iy in xrange(0,view[3]):
