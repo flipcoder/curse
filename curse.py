@@ -36,11 +36,11 @@ class Signal:
         self.slots += [cb]
 
 class Object(object):
-    def __init__(self, name, glyph, world):
+    def __init__(self, name, glyph, world, **kwargs):
         self.name = name
         self.glyph = glyph
-        self.x = 0
-        self.y = 0
+        self.x = kwargs.get("x", 0)
+        self.y = kwargs.get("y", 0)
         self.world = world
         
         self.attach()
@@ -158,8 +158,8 @@ class Object(object):
         return self.world.tile(self.x + x,  self.y + y)
         
 class Player(Object):
-    def __init__(self, name, glyph, world):
-        super(self.__class__, self).__init__(name, glyph, world)
+    def __init__(self, name, glyph, world, **kwargs):
+        super(self.__class__, self).__init__(name, glyph, world, **kwargs)
         self.hp = 100
         self.on_try_move.connect(self.orient)
         self.on_collision.connect(self.collision)
@@ -170,7 +170,7 @@ class Player(Object):
 
     def collision(self, other, post_signal):
         if other.__class__.__name__ == 'Monster':
-            self.hp = max(0, self.hp - 10)
+            self.hp = max(0, self.hp - 25)
         elif other.__class__.__name__ == 'Item':
             if other.name == 'gold coin':
                 self.gold += 10
@@ -223,15 +223,19 @@ class Player(Object):
         self.update_targets()
 
 class Item(Object):
-    def __init__(self, name, glyph, world):
+    def __init__(self, name, glyph, world, **kwargs):
         super(self.__class__, self).__init__(name, glyph, world)
 
 class Monster(Object):
-    def __init__(self, name, glyph, world):
-        super(self.__class__, self).__init__(name, glyph, world)
+    def __init__(self, name, glyph, world, **kwargs):
+        super(self.__class__, self).__init__(name, glyph, world, **kwargs)
+        self.speed = kwargs.get("speed", 0.0)
     def tick(self, t):
-        if random.random() <= 0.1:
-            self.try_move(random.randint(0,2) - 1, random.randint(0,2) - 1)
+        speed = self.speed
+        while speed > 0.0:
+            if random.random() <= min(speed, 1.0):
+                self.try_move(random.randint(0,2) - 1, random.randint(0,2) - 1)
+            speed -= 1.0
     def can_pass(self, tile):
         # prevent monsters from moving over tiles that can conceal player
         return super(self.__class__, self).can_pass(tile) and not tile.conceal
@@ -279,9 +283,40 @@ class Map:
         y = max(0, min(y, self.h-1))
         return (x,y)
         
+
 def main(win):
     curses.curs_set(0)
+    
     win_sz = win.getmaxyx()[::-1]
+    
+    while True:
+        msg = game(win)
+        if not msg:
+            break
+        msg = " %s -- (r)etry / (q)uit? " % msg
+        win.addstr(win_sz[1]/2, win_sz[0]/2 - len(msg)/2, msg)
+        win.refresh()
+        
+        op = ""
+        
+        time.sleep(.100)
+        
+        while not op:
+            op = win.getch()
+            if op in [ord('q'), ord('r')]:
+                break
+            else:
+                op = ""
+        
+        if op == ord('q'):
+            break
+        elif op == ord('r'):
+            continue
+
+def game(win):
+    win_sz = win.getmaxyx()[::-1]
+    win.clear()
+    win.box()
     
     text = "Loading..."
     win.addstr(win_sz[1]/2, win_sz[0]/2 - len(text)/2, text)
@@ -320,7 +355,7 @@ def main(win):
     objects = []
     
     for i in xrange(int(0.01 * world.w * world.h)):
-        p = Monster("monster", MONSTER, world)
+        p = Monster("monster", MONSTER, world, speed=random.random() * 0.1)
         p.random_teleport()
         objects.append(p)
     
@@ -360,7 +395,7 @@ def main(win):
         camera[0] = player.x - view[2]/2
         camera[1] = player.y - view[3]/2
         
-        win.refresh()
+        win.erase()
 
         for ix in xrange(0,view[2]):
             for iy in xrange(0,view[3]):
@@ -388,7 +423,7 @@ def main(win):
         
         ch = win.getch()
         if ch == ord('q'):
-            break
+            return ""
         
         if ch == ord('i') or ch == curses.KEY_UP:
             player.try_move(0,-1)
@@ -400,6 +435,9 @@ def main(win):
             player.try_move(1,0)
 
         player.tick(advance)
+
+        if player.hp <= 0:
+            return "You are dead."
         
         objects = filter(lambda obj: obj.attached(), objects)
         for obj in objects:
