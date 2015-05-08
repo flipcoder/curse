@@ -79,7 +79,7 @@ class Object(object):
 
         if result and len(target.objects) > 1:
             post_signal = Signal()
-            for p in itertools.combinations_with_replacement(target.objects, 2):
+            for p in itertools.combinations(target.objects, 2):
                 p[0].on_collision(p[1], post_signal)
             post_signal()
     
