@@ -42,16 +42,21 @@ class Object(object):
         self.x = kwargs.get("x", 0)
         self.y = kwargs.get("y", 0)
         self.world = world
+        self.properties(**kwargs)
         
         self.attach()
 
         self.on_try_move = Signal()
         self.on_collision = Signal()
+        
 
     def draw(self, win):
         draw(win, self.glyph)
     def draw(self, win, x, y):
         draw(win, self.glyph, x, y)
+
+    def properties(self, **kwargs):
+        pass
 
     def attach(self):
         tile = self.world.tile(self.x,self.y)
@@ -178,6 +183,13 @@ class Player(Object):
                 post_signal.connect(lambda:
                     other.detach()
                 )
+            elif other.name == 'health kit':
+                #self.hp += min(self.hp + 25, 100)
+                self.hp = 100
+                self.last_pickup = other.name
+                post_signal.connect(lambda:
+                    other.detach()
+                )
 
     def thinking(self):
         if self.hiding():
@@ -250,6 +262,7 @@ class Tile:
         self.name = kwargs.get("name", "")
         self.solid = kwargs.get("solid", False)
         self.conceal = kwargs.get("conceal", False)
+        self.theme = kwargs.get("theme", "")
 
 class Map:
     def __init__(self, name, w, h, fill):
@@ -270,13 +283,49 @@ class Map:
             return None
         return self.grid[y][x]
     
-    def sprinkle(self, glyph, freq, **kwargs):
+    #def structure(self, **kwargs):
+    #    doors = kwargs["doors"]
+    #    wall = kwargs["wall"]
+    #    floor = kwargs.get("floor", None)
+
+    def sprinkle(self, T, freq, **kwargs):
+        try:
+            if T.__class__.__name__ == Glyph.__name__:
+                # T is a Glyph
+                self.sprinkle_tile(T, freq, **kwargs)
+                return
+        except:
+            pass
+        
+        # T is an object factory
+        return self.sprinkle_object(T, freq, **kwargs)
+        
+    def sprinkle_tile(self, glyph, freq, **kwargs):
         i = 0
         for row in self.grid:
             for tile in row:
                 if random.random() <= freq:
                     tile.glyph = glyph
                     tile.properties(**kwargs)
+    
+    # factory must be:
+    #   - a function returning a new object
+    # freq can be:
+    #   - an integer >=1, for exact number of objects
+    #   OR
+    #   - float, decimal between 0 and 1, for likelihood of occurrence
+    def sprinkle_object(self, factory, freq, **kwargs):
+        r = []
+        if int(freq) >= 1: # treat freq as object count
+            count = int(freq)
+        else: # treat freq as likelihood
+            count = int(freq * self.w * self.h)
+        for i in xrange(count):
+            p = factory()
+            p.random_teleport()
+            p.properties(**kwargs)
+            r.append(p)
+        return r
 
     def snap(self, x, y):
         x = max(0, min(x, self.w-1))
@@ -342,6 +391,14 @@ def game(win):
 
     GOLD = Glyph('*', 7)
     curses.init_pair(7, curses.COLOR_YELLOW, curses.COLOR_BLACK)
+
+    HEALTH = Glyph("+", 8)
+    curses.init_pair(8, curses.COLOR_RED, curses.COLOR_WHITE)
+
+    DOOR_H = Glyph('-', 4)
+    DOOR_V = Glyph('|', 4)
+    WALL = Glyph('H', 4)
+    FENCE = Glyph('#', 4)
     
     NOTHING = Glyph('X',10)
     curses.init_pair(10, curses.COLOR_RED, curses.COLOR_BLACK)
@@ -351,18 +408,28 @@ def game(win):
     world.sprinkle(ROCK, 0.01, solid=True, name="rock")
     world.sprinkle(BUSH, 0.02, conceal=True, name="bush")
     world.sprinkle(TREE, 0.02, solid=True, name="tree")
+    
+    #world.structure(
+    #    theme="inside"
+    #    wall=WALL,
+    #    doors=[DOOR_H,DOOR_V],
+    #    flor=[FLOOR]
+    #)
 
     objects = []
     
-    for i in xrange(int(0.01 * world.w * world.h)):
-        p = Monster("monster", MONSTER, world, speed=random.random() * 0.1)
-        p.random_teleport()
-        objects.append(p)
-    
-    for i in xrange(int(0.001 * world.w * world.h)):
-        p = Item("gold coin", GOLD, world)
-        p.random_teleport()
-        objects.append(p)
+    objects += world.sprinkle(
+        lambda: Monster("monster", MONSTER, world, speed=random.random()*0.1),
+        0.01
+    )
+    objects += world.sprinkle(
+        lambda: Item("gold coin", GOLD, world),
+        0.001
+    )
+    objects += world.sprinkle(
+        lambda: Item("health kit", HEALTH, world),
+        0.0001
+    )
 
     player = Player("Player", PLAYER, world)
     player.random_teleport()
@@ -408,23 +475,23 @@ def game(win):
                             draw(win, obj.glyph, ix + view[0], iy + view[1])
                 else:
                     draw(win, NOTHING, ix + view[0], iy + view[1])
-        
+
+        # draw HUD
         t = player.thinking()
         if t:
             ft = " %s " % t 
             win.addstr(2, view[0] + view[2]/2 - len(t)/2, ft, curses.color_pair(11))
-        
         win.addstr(view[1]+view[3], 1, world.name)
-        
         status = "Gold: %s | HP %s / 100" % (player.gold, player.hp)
         win.addstr(view[1]+view[3], view[0]+view[2]-len(status), status)
-        
+        # draw border
         win.box()
         
         ch = win.getch()
         if ch == ord('q'):
             return ""
         
+        # interface logic
         if ch == ord('i') or ch == curses.KEY_UP:
             player.try_move(0,-1)
         elif ch == ord('k') or ch == curses.KEY_DOWN:
@@ -434,14 +501,17 @@ def game(win):
         elif ch == ord('l') or ch == curses.KEY_RIGHT:
             player.try_move(1,0)
 
+        # player logic
         player.tick(advance)
 
-        if player.hp <= 0:
-            return "You are dead."
-        
+        # object logic
         objects = filter(lambda obj: obj.attached(), objects)
         for obj in objects:
             obj.tick(advance)
+        
+        # game state termination
+        if player.hp <= 0:
+            return "You are dead."
 
 if __name__=='__main__':
     curses.wrapper(main)
