@@ -36,7 +36,8 @@ class Signal:
         self.slots += [cb]
 
 class Object(object):
-    def __init__(self, glyph, world):
+    def __init__(self, name, glyph, world):
+        self.name = name
         self.glyph = glyph
         self.x = 0
         self.y = 0
@@ -62,10 +63,21 @@ class Object(object):
         if tile and self in tile.objects:
             tile.objects.remove(self)
 
+    def attached(self):
+        if not self.world:
+            return False
+        tile = self.world.tile(self.x,self.y)
+        if not tile:
+            return False
+        return self in tile.objects
+
     def tick(self, t):
         pass
 
     def try_move(self, x, y):
+        if not self.attached():
+            return False
+        
         target = self.world.tile(self.x + x, self.y + y)
         result = False
         if target and not target.solid:
@@ -97,15 +109,45 @@ class Object(object):
         self.attach()
         
 class Player(Object):
-    def __init__(self, glyph, world):
-        super(self.__class__, self).__init__(glyph, world)
+    def __init__(self, name, glyph, world):
+        super(self.__class__, self).__init__(name, glyph, world)
         self.hp = 100
         self.on_try_move.connect(self.orient)
         self.on_collision.connect(self.collision)
+        self.dir = [0,1]
+        self.last_target = ""
+        self.gold = 0
 
     def collision(self, other, post_signal):
-        self.hp = max(0, self.hp - 10)
-        #other.hp = 0
+        if other.__class__.__name__ == 'Monster':
+            self.hp = max(0, self.hp - 10)
+        elif other.__class__.__name__ == 'Item':
+            if other.name == 'gold coin':
+                self.gold += 10
+                post_signal.connect(lambda:
+                    other.detach()
+                )
+
+    def thinking(self):
+        t = self.world.tile(self.x, self.y)
+        if t and t.conceal:
+            return "I am hiding."
+        
+        if self.last_target:
+            return "I see a %s." % self.last_target
+        
+        return ""
+        
+    def update_targets(self):
+        tile = self.world.tile(self.x + self.dir[0], self.y + self.dir[1])
+        target = ""
+        if tile:
+            if tile.objects:
+                target = tile.objects[0].name
+                self.last_target = target
+            else:
+                target = tile.name
+                self.last_target = target
         
     def orient(self, x, y, result):
         if x > 0:
@@ -117,9 +159,18 @@ class Player(Object):
         elif y > 0:
             self.glyph.string = 'v'
 
+        self.dir = (x, y)
+
+    def tick(self, t):
+        self.update_targets()
+
+class Item(Object):
+    def __init__(self, name, glyph, world):
+        super(self.__class__, self).__init__(name, glyph, world)
+
 class Monster(Object):
-    def __init__(self, glyph, world):
-        super(self.__class__, self).__init__(glyph, world)
+    def __init__(self, name, glyph, world):
+        super(self.__class__, self).__init__(name, glyph, world)
     def tick(self, t):
         if random.random() <= 0.1:
             self.try_move(random.randint(0,2) - 1, random.randint(0,2) - 1)
@@ -133,6 +184,7 @@ class Tile:
     def properties(self, **kwargs):
         self.name = kwargs.get("name", "")
         self.solid = kwargs.get("solid", False)
+        self.conceal = kwargs.get("conceal", False)
 
 class Map:
     def __init__(self, name, w, h, fill):
@@ -170,7 +222,7 @@ def main(win):
     GRASS = Glyph('.',2)
     curses.init_pair(2, curses.COLOR_GREEN, curses.COLOR_BLACK)
     
-    SHRUB = Glyph('*', 3)
+    BUSH = Glyph('*', 3)
     curses.init_pair(3, curses.COLOR_GREEN, curses.COLOR_BLACK)
     
     ROCK = Glyph('o', 4)
@@ -181,21 +233,30 @@ def main(win):
 
     MONSTER = Glyph("M", 6)
     curses.init_pair(6, curses.COLOR_RED, curses.COLOR_BLACK)
+
+    GOLD = Glyph('*', 7)
+    curses.init_pair(7, curses.COLOR_YELLOW, curses.COLOR_BLACK)
     
     NOTHING = Glyph('X',10)
     curses.init_pair(10, curses.COLOR_RED, curses.COLOR_BLACK)
+    curses.init_pair(11, curses.COLOR_YELLOW, curses.COLOR_BLACK)
 
     world = Map("The Forest", 100, 100, GRASS)
     world.sprinkle(ROCK, 0.01, solid=True, name="rock")
-    world.sprinkle(SHRUB, 0.02, solid=True, name="shrub")
+    world.sprinkle(BUSH, 0.02, conceal=True, name="bush")
     world.sprinkle(TREE, 0.02, solid=True, name="tree")
     
-    player = Player(PLAYER, world)
+    player = Player("Player", PLAYER, world)
 
     objects = []
     
     for i in xrange(int(0.01 * world.w * world.h)):
-        p = Monster(MONSTER, world)
+        p = Monster("monster", MONSTER, world)
+        p.teleport(random.randint(0, world.w), random.randint(0, world.h))
+        objects.append(p)
+    
+    for i in xrange(int(0.001 * world.w * world.h)):
+        p = Item("gold coin", GOLD, world)
         p.teleport(random.randint(0, world.w), random.randint(0, world.h))
         objects.append(p)
 
@@ -233,7 +294,7 @@ def main(win):
             for iy in xrange(0,view[3]):
                 tile = world.tile(ix + camera[0], iy + camera[1])
                 if tile:
-                    if not tile.objects:
+                    if not tile.objects or tile.conceal:
                         draw(win, tile.glyph, ix + view[0], iy + view[1])
                     else:
                         for obj in tile.objects:
@@ -241,9 +302,14 @@ def main(win):
                 else:
                     draw(win, NOTHING, ix + view[0], iy + view[1])
         
+        t = player.thinking()
+        if t:
+            ft = " %s " % t 
+            win.addstr(2, view[0] + view[2]/2 - len(t)/2, ft, curses.color_pair(11))
+        
         win.addstr(view[1]+view[3], 1, world.name)
         
-        status = "HP %s / 100" % player.hp
+        status = "Gold: %s | HP %s / 100" % (player.gold, player.hp)
         win.addstr(view[1]+view[3], view[0]+view[2]-len(status), status)
         
         win.box()
@@ -261,6 +327,9 @@ def main(win):
         elif ch == ord('l') or ch == curses.KEY_RIGHT:
             player.try_move(1,0)
 
+        player.tick(advance)
+        
+        objects = filter(lambda obj: obj.attached(), objects)
         for obj in objects:
             obj.tick(advance)
 
