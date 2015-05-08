@@ -1,1 +1,1 @@
-![screenshot](https://raw.githubusercontent.com/flipcoder/curse/master/screenshot.png)
+![screenshot](http://i.imgur.com/jAU3JK7l.png)

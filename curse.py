@@ -117,6 +117,7 @@ class Player(Object):
         self.dir = [0,1]
         self.last_target = ""
         self.gold = 0
+        self.last_pickup = ""
 
     def collision(self, other, post_signal):
         if other.__class__.__name__ == 'Monster':
@@ -124,31 +125,46 @@ class Player(Object):
         elif other.__class__.__name__ == 'Item':
             if other.name == 'gold coin':
                 self.gold += 10
+                self.last_pickup = other.name
                 post_signal.connect(lambda:
                     other.detach()
                 )
 
     def thinking(self):
-        t = self.world.tile(self.x, self.y)
-        if t and t.conceal:
+        if self.hiding():
             return "I am hiding."
-        
         if self.last_target:
             return "I see a %s." % self.last_target
+        if self.last_pickup:
+            return "Picked up %s." % self.last_pickup
         
         return ""
         
     def update_targets(self):
-        tile = self.world.tile(self.x + self.dir[0], self.y + self.dir[1])
+        tile = self.immediate_tile(self.dir[0], self.dir[1])
         target = ""
         if tile:
             if tile.objects:
                 target = tile.objects[0].name
                 self.last_target = target
+                #self.last_pickup = None # clear pickup messages
             else:
                 target = tile.name
                 self.last_target = target
+                if target:
+                    self.last_pickup = None # clear pickup messages
         
+        
+    def current_tile(self):
+        return self.world.tile(self.x, self.y)
+    
+    def immediate_tile(self, x, y):
+        return self.world.tile(self.x + x,  self.y + y)
+        
+    def hiding(self):
+        t = self.current_tile()
+        return t and t.conceal
+    
     def orient(self, x, y, result):
         if x > 0:
             self.glyph.string = '>'
@@ -245,8 +261,6 @@ def main(win):
     world.sprinkle(ROCK, 0.01, solid=True, name="rock")
     world.sprinkle(BUSH, 0.02, conceal=True, name="bush")
     world.sprinkle(TREE, 0.02, solid=True, name="tree")
-    
-    player = Player("Player", PLAYER, world)
 
     objects = []
     
@@ -259,6 +273,9 @@ def main(win):
         p = Item("gold coin", GOLD, world)
         p.teleport(random.randint(0, world.w), random.randint(0, world.h))
         objects.append(p)
+
+    player = Player("Player", PLAYER, world)
+    player.teleport(random.randint(0, world.w), random.randint(0, world.h))
 
     camera = [0,0]
     
