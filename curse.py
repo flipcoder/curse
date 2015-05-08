@@ -5,8 +5,6 @@ import time
 import random
 import copy
 
-map = []
-
 random.seed()
 
 class Glyph:
@@ -125,7 +123,6 @@ def main(win):
     
     player = Player(PLAYER, world)
 
-    #win.nodelay(1)
     camera = [0,0]
     while True:
         
@@ -154,7 +151,6 @@ def main(win):
         status = "HP %s / 100" % player.hp
         win.addstr(view[1]+view[3], view[0]+view[2]-len(status), status)
         
-        #player.draw(win)
         win.box()
         
         ch = win.getch()
