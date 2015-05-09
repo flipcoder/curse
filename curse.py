@@ -11,7 +11,8 @@ import itertools
 random.seed()
 
 class Glyph:
-    def __init__(self,string,color):
+    def __init__(self,name,string,color):
+        self.name = name
         self.string = string
         self.color = curses.color_pair(color)
 
@@ -275,6 +276,13 @@ class Map:
             line.append(Tile(fill))
         for t in xrange(h):
             self.grid.append(copy.deepcopy(line))
+        
+        self.nothing_glyph = None
+        
+        self.glyphs = {}
+        self.glyphs[fill.name] = fill
+        
+        self.object_factories = {}
     
     def tile(self, x, y):
         if x < 0 or y < 0:
@@ -306,10 +314,13 @@ class Map:
             for tile in row:
                 if random.random() <= freq:
                     tile.glyph = glyph
+                    tile.name = glyph.name
                     tile.properties(**kwargs)
     
     # factory must be:
     #   - a function returning a new object
+    #   OR
+    #   - name of factory registered with World.object()
     # freq can be:
     #   - an integer >=1, for exact number of objects
     #   OR
@@ -331,17 +342,50 @@ class Map:
         x = max(0, min(x, self.w-1))
         y = max(0, min(y, self.h-1))
         return (x,y)
+
+    def set_nothing_glyph(self, glyph):
+        self.nothing = glyph
         
+    def glyph(self, *args):
+        if len(args) == 1:
+            return self.glyphs[g.name]
+        g = Glyph(*args)
+        self.glyphs[g.name] = g
+        if g.name == 'nothing':
+            self.nothing_glyph = g
+        return g
+        
+    def render(self, win, camera, view):
+        # render visible map region based on camera and viewport
+        for ix in xrange(0,view[2]):
+            for iy in xrange(0,view[3]):
+                # adding camera coords transforms us into world space
+                # use world space coords to get tile, null if out of range
+                tile = self.tile(ix + camera[0], iy + camera[1])
+                if tile:
+                    # if tile has no objects or is concealing them
+                    if not tile.objects or tile.conceal:
+                        draw(win, tile.glyph, ix + view[0], iy + view[1])
+                    else:
+                        # draw top object on tile
+                        if tile.objects:
+                            obj = tile.objects[0]
+                            draw(win, obj.glyph, ix + view[0], iy + view[1])
+                else:
+                    # tile is out of range, draw placeholders
+                    if self.nothing_glyph:
+                        draw(win, self.nothing_glyph, ix + view[0], iy + view[1])
 
 def main(win):
     curses.curs_set(0)
     
-    win_sz = win.getmaxyx()[::-1]
     
     while True:
         msg = game(win)
         if not msg:
             break
+        
+        win_sz = win.getmaxyx()[::-1]
         msg = " %s -- (r)etry / (q)uit? " % msg
         win.addstr(win_sz[1]/2, win_sz[0]/2 - len(msg)/2, msg)
         win.refresh()
@@ -362,6 +406,31 @@ def main(win):
         elif op == ord('r'):
             continue
 
+def interface_logic(win, player):
+    ch = win.getch()
+    if ch == ord('q'):
+        return False
+    
+    # interface logic
+    if ch == ord('i') or ch == curses.KEY_UP:
+        player.try_move(0,-1)
+    elif ch == ord('k') or ch == curses.KEY_DOWN:
+        player.try_move(0,1)
+    elif ch == ord('j') or ch == curses.KEY_LEFT:
+        player.try_move(-1,0)
+    elif ch == ord('l') or ch == curses.KEY_RIGHT:
+        player.try_move(1,0)
+    return True
+
+def hud_render(win, view, player):
+    t = player.thinking()
+    if t:
+        ft = " %s " % t 
+        win.addstr(2, view[0] + view[2]/2 - len(t)/2, ft, curses.color_pair(11))
+    win.addstr(view[1]+view[3], 1, player.world.name)
+    status = "Gold: %s | HP %s / 100" % (player.gold, player.hp)
+    win.addstr(view[1]+view[3], view[0]+view[2]-len(status), status)
+
 def game(win):
     win_sz = win.getmaxyx()[::-1]
     win.clear()
@@ -371,44 +440,43 @@ def game(win):
     win.addstr(win_sz[1]/2, win_sz[0]/2 - len(text)/2, text)
     win.refresh()
     
-    PLAYER = Glyph('v',1)
+    PLAYER = Glyph('player', 'v', 1)
     curses.init_pair(1, curses.COLOR_BLACK, curses.COLOR_WHITE)
-    
-    GRASS = Glyph('.',2)
+    GRASS = Glyph('grass', '.',2)
     curses.init_pair(2, curses.COLOR_GREEN, curses.COLOR_BLACK)
+    world = Map("The Forest", 300, 300, GRASS)
     
-    BUSH = Glyph('*', 3)
+    BUSH = world.glyph('bush', '*', 3)
     curses.init_pair(3, curses.COLOR_GREEN, curses.COLOR_BLACK)
     
-    ROCK = Glyph('o', 4)
+    ROCK = world.glyph('rock', 'o', 4)
     curses.init_pair(4, curses.COLOR_WHITE, curses.COLOR_BLACK)
     
-    TREE = Glyph('T', 5)
+    TREE = world.glyph('tree', 'T', 5)
     curses.init_pair(5, curses.COLOR_GREEN, curses.COLOR_BLACK)
 
-    MONSTER = Glyph("M", 6)
+    MONSTER = world.glyph('monster', "M", 6)
     curses.init_pair(6, curses.COLOR_RED, curses.COLOR_BLACK)
 
-    GOLD = Glyph('*', 7)
+    GOLD = world.glyph('gold', '*', 7)
     curses.init_pair(7, curses.COLOR_YELLOW, curses.COLOR_BLACK)
 
-    HEALTH = Glyph("+", 8)
+    HEALTH = world.glyph('health', "+", 8)
     curses.init_pair(8, curses.COLOR_RED, curses.COLOR_WHITE)
 
-    DOOR_H = Glyph('-', 4)
-    DOOR_V = Glyph('|', 4)
-    WALL = Glyph('H', 4)
-    FENCE = Glyph('#', 4)
+    DOOR_H = world.glyph('door_h', '-', 4)
+    DOOR_V = world.glyph('door_v', '|', 4)
+    WALL = world.glyph('wall', 'H', 4)
+    FENCE = world.glyph('fence', '#', 4)
     
-    NOTHING = Glyph('X',10)
+    NOTHING = world.glyph('nothing', 'X',10)
+
+    world.sprinkle(ROCK, 0.01, solid=True)
+    world.sprinkle(BUSH, 0.02, conceal=True)
+    world.sprinkle(TREE, 0.02, solid=True)
+    
     curses.init_pair(10, curses.COLOR_RED, curses.COLOR_BLACK)
     curses.init_pair(11, curses.COLOR_YELLOW, curses.COLOR_BLACK)
-
-    world = Map("The Forest", 300, 300, GRASS)
-    world.sprinkle(ROCK, 0.01, solid=True, name="rock")
-    world.sprinkle(BUSH, 0.02, conceal=True, name="bush")
-    world.sprinkle(TREE, 0.02, solid=True, name="tree")
-    
     #world.structure(
     #    theme="inside"
     #    wall=WALL,
@@ -431,12 +499,14 @@ def game(win):
         0.0001
     )
 
-    player = Player("Player", PLAYER, world)
+    player = Player("Player", copy.deepcopy(PLAYER), world)
     player.random_teleport()
 
     camera = [0,0]
     
     win.nodelay(1)
+    
+    # init timer
     t0 = time.time()
     accum = 0 # time accumulated since last tick
     
@@ -445,6 +515,7 @@ def game(win):
     
     while True:
         
+        # advance timer at a fixed framerate
         advance = 0
         while True:
             t1 = time.time()
@@ -456,52 +527,27 @@ def game(win):
                 break
             time.sleep(0.001)
         
-        win_sz = win.getmaxyx()[::-1]
-        view = [1, 1, win_sz[0] - 2, win_sz[1] - 3]
-        
-        camera[0] = player.x - view[2]/2
-        camera[1] = player.y - view[3]/2
+        # calculate view and camera values based on term size
+        win_sz = win.getmaxyx()[::-1] # window size (in chars)
+        view = [1, 1, win_sz[0] - 2, win_sz[1] - 3] # (view x,y,w,h)
+
+        # x,y position where to start rendering our map
+        camera = [player.x - view[2]/2, player.y - view[3]/2]
         
         win.erase()
 
-        for ix in xrange(0,view[2]):
-            for iy in xrange(0,view[3]):
-                tile = world.tile(ix + camera[0], iy + camera[1])
-                if tile:
-                    if not tile.objects or tile.conceal:
-                        draw(win, tile.glyph, ix + view[0], iy + view[1])
-                    else:
-                        for obj in tile.objects:
-                            draw(win, obj.glyph, ix + view[0], iy + view[1])
-                else:
-                    draw(win, NOTHING, ix + view[0], iy + view[1])
+        world.render(win, camera, view)
 
         # draw HUD
-        t = player.thinking()
-        if t:
-            ft = " %s " % t 
-            win.addstr(2, view[0] + view[2]/2 - len(t)/2, ft, curses.color_pair(11))
-        win.addstr(view[1]+view[3], 1, world.name)
-        status = "Gold: %s | HP %s / 100" % (player.gold, player.hp)
-        win.addstr(view[1]+view[3], view[0]+view[2]-len(status), status)
+        hud_render(win, view, player)
+        
         # draw border
         win.box()
+        win.refresh()
         
-        ch = win.getch()
-        if ch == ord('q'):
-            return ""
+        if not interface_logic(win, player):
+            return "" # user quit
         
-        # interface logic
-        if ch == ord('i') or ch == curses.KEY_UP:
-            player.try_move(0,-1)
-        elif ch == ord('k') or ch == curses.KEY_DOWN:
-            player.try_move(0,1)
-        elif ch == ord('j') or ch == curses.KEY_LEFT:
-            player.try_move(-1,0)
-        elif ch == ord('l') or ch == curses.KEY_RIGHT:
-            player.try_move(1,0)
-
-        # player logic
         player.tick(advance)
 
         # object logic
