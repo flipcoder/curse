@@ -201,18 +201,15 @@ class Player(Object):
         
     def update_targets(self):
         tile = self.immediate_tile(self.dir[0], self.dir[1])
-        target = ""
+        self.last_target = ""
         if tile:
             if tile.objects:
-                target = tile.objects[0].name
-                self.last_target = target
-                #self.last_pickup = None # clear pickup messages
-            else:
-                target = tile.name
-                self.last_target = target
-                if target:
-                    self.last_pickup = None # clear pickup messages
-        
+                self.last_target = tile.objects[0].name
+            elif tile.solid or tile.conceal:
+                self.last_target = tile.name
+        if self.last_target:
+            self.last_pickup = None # clear pickup messages
+
     def hiding(self):
         t = self.current_tile()
         return t and t.conceal
@@ -257,7 +254,7 @@ class Tile:
         self.properties(**kwargs)
 
     def properties(self, **kwargs):
-        self.name = kwargs.get("name", "")
+        self.name = kwargs.get("name", self.glyph.name)
         self.solid = kwargs.get("solid", False)
         self.conceal = kwargs.get("conceal", False)
         self.theme = kwargs.get("theme", "")
