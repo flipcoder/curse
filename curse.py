@@ -50,9 +50,6 @@ class Object(object):
         self.on_try_move = Signal()
         self.on_collision = Signal()
         
-
-    def draw(self, win):
-        draw(win, self.glyph)
     def draw(self, win, x, y):
         draw(win, self.glyph, x, y)
 
