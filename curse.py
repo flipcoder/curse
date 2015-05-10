@@ -246,7 +246,7 @@ class Player(Object):
             self.last_pickup = None # clear pickup messages
         else:
             self.last_target = ""
-        
+
     def hiding(self):
         t = self.current_tile()
         return t and t.conceal
@@ -311,6 +311,7 @@ class Tile:
         self.properties(**kwargs)
 
     def properties(self, **kwargs):
+        self.name = kwargs.get("name", self.glyph.name)
         self.solid = kwargs.get("solid", False)
         self.plural = kwargs.get("plural", False)
         self.conceal = kwargs.get("conceal", False)
