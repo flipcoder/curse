@@ -291,7 +291,7 @@ class Monster(Object):
     def tick(self, t):
         if not self.attached():
             return
-        speed = self.speed
+        speed = self.speed * t
         while speed > 0.0:
             if random.random() <= min(speed, 1.0):
                 self.try_move(random.randint(0,2) - 1, random.randint(0,2) - 1)
@@ -568,7 +568,7 @@ def game(win):
     #)
 
     world.sprinkle(
-        lambda **kwargs: Monster("monster", MONSTER, world, speed=random.random()*0.1, **kwargs),
+        lambda **kwargs: Monster("monster", MONSTER, world, speed=random.random()*1.0, **kwargs),
         0.01
     )
     world.sprinkle(
@@ -595,7 +595,7 @@ def game(win):
     t0 = time.time()
     accum = 0 # time accumulated since last tick
     
-    FPS = 30.0
+    FPS = 15.0
     FPS_INV = 1.0 / FPS
     
     while True:
