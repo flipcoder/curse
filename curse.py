@@ -311,7 +311,6 @@ class Tile:
         self.properties(**kwargs)
 
     def properties(self, **kwargs):
-        self.name = kwargs.get("name", self.glyph.name)
         self.solid = kwargs.get("solid", False)
         self.plural = kwargs.get("plural", False)
         self.conceal = kwargs.get("conceal", False)
