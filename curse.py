@@ -4,7 +4,6 @@ import curses
 import time
 import random
 import copy
-import fcntl
 import time
 import itertools
 
@@ -137,7 +136,7 @@ class Object(object):
         return result
     
     def move(self, x, y):
-        assert self.attached
+        assert self.attached()
         self.detach()
         self.x += x
         self.y += y
