@@ -444,7 +444,7 @@ class Map:
                 tile = self.tile(ix + camera[0], iy + camera[1])
                 if tile:
                     # if tile has no objects or is concealing them
-                    if not tile.objects:
+                    if not tile.objects or tile.conceal:
                         draw(win, tile.glyph, ix + view[0], iy + view[1])
                     else:
                         # draw first object
