@@ -459,7 +459,6 @@ class Map:
 def main(win):
     curses.curs_set(0)
     
-    
     while True:
         msg = game(win)
         if not msg:
@@ -638,7 +637,7 @@ def game(win):
         player.tick(advance)
 
         # object logic
-        #world.objects = filter(lambda obj: obj.attached(), world.objects)
+        world.objects = filter(lambda obj: obj.attached(), world.objects)
         for obj in world.objects:
             obj.tick(advance)
         
