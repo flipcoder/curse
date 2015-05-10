@@ -11,10 +11,11 @@ import itertools
 random.seed()
 
 class Glyph:
-    def __init__(self,name,string,color):
+    def __init__(self,name,string,color,**kwargs):
         self.name = name
         self.string = string
         self.color = curses.color_pair(color)
+        self.plural = kwargs.get("plural", False)
 
 def draw(win, glyph, x, y):
     win.addstr(y, x, glyph.string, glyph.color)
@@ -38,26 +39,42 @@ class Signal:
 
 class Object(object):
     def __init__(self, name, glyph, world, **kwargs):
+        assert name
         self.name = name
+        assert glyph
         self.glyph = glyph
-        self.x = kwargs.get("x", 0)
-        self.y = kwargs.get("y", 0)
+        assert world
         self.world = world
         self.properties(**kwargs)
-        
-        self.attach()
 
         self.on_try_move = Signal()
         self.on_collision = Signal()
-        
 
     def draw(self, win):
-        draw(win, self.glyph)
+        draw(win, self.glyph, self.x, self.y)
+        
     def draw(self, win, x, y):
         draw(win, self.glyph, x, y)
 
+    def tile_pos(self):
+        if isinstance(self.x, int):
+            return (self.x, self.y)
+        else:
+            return (int(round(self.x), int(round(self.y))))
+        
     def properties(self, **kwargs):
-        pass
+        self.plural = kwargs.get("plural", False)
+        self.obvious = kwargs.get("obvious", False)
+        
+        if "pos" in kwargs:
+            (self.x, self.y) = kwargs["pos"]
+        else:
+            self.x = kwargs.get("x", 0)
+            self.y = kwargs.get("y", 0)
+        
+        (self.vx, self.vy) = kwargs.get("vel", (0,0))
+        self.vx *= 1.0
+        self.vy *= 1.0
 
     def attach(self):
         tile = self.world.tile(self.x,self.y)
@@ -98,7 +115,7 @@ class Object(object):
     def try_move(self, x, y):
         assert self.attached()
         
-        target = self.world.tile(self.x + x, self.y + y)
+        target = self.immediate_tile(x, y)
         result = False
         if target and self.can_pass(target):
             self.detach()
@@ -115,16 +132,18 @@ class Object(object):
                 p[0].on_collision(p[1], post_signal)
                 p[1].on_collision(p[0], post_signal)
             post_signal()
+
+        assert self.attached()
+        return result
     
     def move(self, x, y):
-        assert self.attached()
+        assert self.attached
         self.detach()
         self.x += x
         self.y += y
         self.attach()
 
     def teleport(self, x, y):
-        assert self.attached()
         self.detach()
         self.x = x
         self.y = y
@@ -132,17 +151,20 @@ class Object(object):
 
     def random_teleport(self):
         done = False
+        use_floats = isinstance(self.x, float)
         while True:
             # pick a random tile
             rx = random.randint(0, self.world.w - 1)
             ry = random.randint(0, self.world.h - 1)
             t = self.world.tile(rx, ry)
+            assert t
             
             # attempt to nudge it a few times into a non-solid area
             attempts = 0
             while attempts < 20:
                 if self.can_pass(t) and not t.objects:
                     done = True
+                    break
                 
                 rx += random.randint(0,2)-1
                 ry += random.randint(0,2)-1
@@ -153,15 +175,19 @@ class Object(object):
             if done:
                 break
         
-        self.teleport(rx,ry)
-            
+        if use_floats:
+            self.teleport(rx * 1.0,ry * 1.0)
+        else:
+            self.teleport(rx,ry)
+
+        
     def current_tile(self):
         assert self.attached()
         return self.world.tile(self.x, self.y)
     
     def immediate_tile(self, x, y):
         assert self.attached()
-        return self.world.tile(self.x + x,  self.y + y)
+        return self.world.tile(self.x + x,self.y + y)
         
 class Player(Object):
     def __init__(self, name, glyph, world, **kwargs):
@@ -173,6 +199,7 @@ class Player(Object):
         self.last_target = ""
         self.gold = 0
         self.last_pickup = ""
+        self.obvious = False
 
     def collision(self, other, post_signal):
         if other.__class__.__name__ == 'Monster':
@@ -196,7 +223,7 @@ class Player(Object):
         if self.hiding():
             return "I am hiding."
         if self.last_target:
-            return "I see a %s." % self.last_target
+            return "I see %s." % self.last_target
         if self.last_pickup:
             return "Picked up %s." % self.last_pickup
         
@@ -206,19 +233,31 @@ class Player(Object):
         tile = self.immediate_tile(self.dir[0], self.dir[1])
         target = ""
         if tile:
-            if tile.objects:
-                target = tile.objects[0].name
-                self.last_target = target
-                #self.last_pickup = None # clear pickup messages
-            else:
-                target = tile.name
-                self.last_target = target
-                if target:
-                    self.last_pickup = None # clear pickup messages
+            objs = filter(lambda o: not o.obvious, tile.objects)
+            if objs:
+                target = self.last_target = \
+                    ("" if objs[0].plural else "a ") + \
+                    objs[0].name
+            elif not tile.obvious:
+                target = self.last_target = \
+                    ("" if tile.plural else "a ") + \
+                    tile.name
+        if target:
+            self.last_pickup = None # clear pickup messages
+        else:
+            self.last_target = ""
         
     def hiding(self):
         t = self.current_tile()
         return t and t.conceal
+
+    def shoot(self):
+        speed = 20.0
+        self.world.spawn(
+            "bullet",
+            pos=(1.0*(self.x + self.dir[0]), 1.0*(self.y + self.dir[1])),
+            vel=(self.dir[0]*1.0*speed,self.dir[1]*1.0*speed)
+        )
     
     def orient(self, x, y, result):
         if x > 0:
@@ -235,15 +274,24 @@ class Player(Object):
     def tick(self, t):
         self.update_targets()
 
+class Bullet(Object):
+    def __init__(self, name, glyph, world, **kwargs):
+        super(self.__class__, self).__init__(name, glyph, world, **kwargs)
+        self.obvious = True
+    def tick(self, t):
+        self.move(self.vx * t, self.vy * t)
+    
 class Item(Object):
     def __init__(self, name, glyph, world, **kwargs):
-        super(self.__class__, self).__init__(name, glyph, world)
+        super(self.__class__, self).__init__(name, glyph, world, **kwargs)
 
 class Monster(Object):
     def __init__(self, name, glyph, world, **kwargs):
         super(self.__class__, self).__init__(name, glyph, world, **kwargs)
         self.speed = kwargs.get("speed", 0.0)
     def tick(self, t):
+        if not self.attached():
+            return
         speed = self.speed
         while speed > 0.0:
             if random.random() <= min(speed, 1.0):
@@ -256,13 +304,17 @@ class Monster(Object):
 class Tile:
     def __init__(self, glyph, **kwargs):
         self.objects = []
+        name = kwargs.get("name", "")
+        if not name:
+            self.name = glyph.name
         self.glyph = glyph
         self.properties(**kwargs)
 
     def properties(self, **kwargs):
-        self.name = kwargs.get("name", "")
         self.solid = kwargs.get("solid", False)
+        self.plural = kwargs.get("plural", False)
         self.conceal = kwargs.get("conceal", False)
+        self.obvious = kwargs.get("obvious", False)
         self.theme = kwargs.get("theme", "")
 
 class Map:
@@ -273,7 +325,7 @@ class Map:
         line = []
         self.grid = []
         for t in xrange(w):
-            line.append(Tile(fill))
+            line.append(Tile(fill, obvious=True))
         for t in xrange(h):
             self.grid.append(copy.deepcopy(line))
         
@@ -282,9 +334,11 @@ class Map:
         self.glyphs = {}
         self.glyphs[fill.name] = fill
         
+        self.objects = []
         self.object_factories = {}
     
     def tile(self, x, y):
+        (x,y) = (int(round(x)),int(round(y)))
         if x < 0 or y < 0:
             return None
         if x >= self.w or y >= self.h:
@@ -320,7 +374,7 @@ class Map:
     # factory must be:
     #   - a function returning a new object
     #   OR
-    #   - name of factory registered with World.object()
+    #   - name of factory registered with World.register_object_factory()
     # freq can be:
     #   - an integer >=1, for exact number of objects
     #   OR
@@ -331,16 +385,37 @@ class Map:
             count = int(freq)
         else: # treat freq as likelihood
             count = int(freq * self.w * self.h)
+        
+        if isinstance(factory, basestring):
+            factory = object_factories[factory]
+        
         for i in xrange(count):
-            p = factory()
+            p = factory(**kwargs)
+            self.ensure_object(p)
             p.random_teleport()
-            p.properties(**kwargs)
             r.append(p)
         return r
 
+    def spawn(self, name, **kwargs):
+        p = self.object_factories[name](**kwargs)
+        self.ensure_object(p)
+        p.attach()
+        return p
+
+    def ensure_object(self, p):
+        if p not in self.objects:
+            self.objects.append(p)
+        
     def snap(self, x, y):
-        x = max(0, min(x, self.w-1))
-        y = max(0, min(y, self.h-1))
+        use_floats = isinstance(x, float)
+        
+        if use_floats:
+            x = max(0.0, min(x, self.w*1.0 - 1.0))
+            y = max(0.0, min(y, self.h*1.0 - 1.0))
+        else:
+            x = max(0, min(x, self.w-1))
+            y = max(0, min(y, self.h-1))
+
         return (x,y)
 
     def set_nothing_glyph(self, glyph):
@@ -348,12 +423,17 @@ class Map:
         
     def glyph(self, *args):
         if len(args) == 1:
-            return self.glyphs[g.name]
+            return self.glyphs[args[0]]
         g = Glyph(*args)
         self.glyphs[g.name] = g
         if g.name == 'nothing':
             self.nothing_glyph = g
         return g
+
+    # factory prototype is T(name, glyph, world, **kwargs)
+    #   where T is Object or derived class of Object
+    def register_object_factory(self, name, factory):
+        self.object_factories[name] = factory
         
     def render(self, win, camera, view):
         # render visible map region based on camera and viewport
@@ -364,13 +444,13 @@ class Map:
                 tile = self.tile(ix + camera[0], iy + camera[1])
                 if tile:
                     # if tile has no objects or is concealing them
-                    if not tile.objects or tile.conceal:
+                    if not tile.objects:
                         draw(win, tile.glyph, ix + view[0], iy + view[1])
                     else:
-                        # draw top object on tile
-                        if tile.objects:
-                            obj = tile.objects[0]
+                        # draw first object
+                        for obj in tile.objects:
                             draw(win, obj.glyph, ix + view[0], iy + view[1])
+                            break
                 else:
                     # tile is out of range, draw placeholders
                     if self.nothing_glyph:
@@ -420,6 +500,8 @@ def interface_logic(win, player):
         player.try_move(-1,0)
     elif ch == ord('l') or ch == curses.KEY_RIGHT:
         player.try_move(1,0)
+    elif ch == ord(' '):
+        player.shoot()
     return True
 
 def hud_render(win, view, player):
@@ -442,7 +524,7 @@ def game(win):
     
     PLAYER = Glyph('player', 'v', 1)
     curses.init_pair(1, curses.COLOR_BLACK, curses.COLOR_WHITE)
-    GRASS = Glyph('grass', '.',2)
+    GRASS = Glyph('grass', '.',2,plural=True)
     curses.init_pair(2, curses.COLOR_GREEN, curses.COLOR_BLACK)
     world = Map("The Forest", 300, 300, GRASS)
     
@@ -464,6 +546,9 @@ def game(win):
     HEALTH = world.glyph('health', "+", 8)
     curses.init_pair(8, curses.COLOR_RED, curses.COLOR_WHITE)
 
+    BULLET = world.glyph('bullet', "\'", 9)
+    curses.init_pair(9, curses.COLOR_RED, curses.COLOR_BLACK)
+
     DOOR_H = world.glyph('door_h', '-', 4)
     DOOR_V = world.glyph('door_v', '|', 4)
     WALL = world.glyph('wall', 'H', 4)
@@ -484,19 +569,21 @@ def game(win):
     #    flor=[FLOOR]
     #)
 
-    objects = []
-    
-    objects += world.sprinkle(
-        lambda: Monster("monster", MONSTER, world, speed=random.random()*0.1),
+    world.sprinkle(
+        lambda **kwargs: Monster("monster", MONSTER, world, speed=random.random()*0.1, **kwargs),
         0.01
     )
-    objects += world.sprinkle(
-        lambda: Item("gold coin", GOLD, world),
+    world.sprinkle(
+        lambda **kwargs: Item("gold coin", GOLD, world, **kwargs),
         0.001
     )
-    objects += world.sprinkle(
-        lambda: Item("health kit", HEALTH, world),
+    world.sprinkle(
+        lambda **kwargs: Item("health kit", HEALTH, world, **kwargs),
         0.0001
+    )
+    world.register_object_factory(
+        "bullet",
+        lambda **kwargs: Bullet("bullet", BULLET, world, **kwargs)
     )
 
     player = Player("Player", copy.deepcopy(PLAYER), world)
@@ -551,8 +638,8 @@ def game(win):
         player.tick(advance)
 
         # object logic
-        objects = filter(lambda obj: obj.attached(), objects)
-        for obj in objects:
+        #world.objects = filter(lambda obj: obj.attached(), world.objects)
+        for obj in world.objects:
             obj.tick(advance)
         
         # game state termination
