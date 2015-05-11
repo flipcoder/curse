@@ -653,7 +653,7 @@ def game(win):
         # calculate view and camera values based on term size
         win_sz = win.getmaxyx()[::-1] # window size (in chars)
         
-        max_size = [20,20]
+        max_size = [60,20]
         capped_size = [min(max_size[0],win_sz[0] - 2), min(max_size[1],win_sz[1] - 3)]
         
         view = [1, 1, capped_size[0], capped_size[1]] # (view x,y,w,h)
