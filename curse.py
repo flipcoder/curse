@@ -6,6 +6,7 @@ import random
 import copy
 import time
 import itertools
+import euclid
 
 random.seed()
 
@@ -53,7 +54,7 @@ class Object(object):
         draw(win, self.glyph, self.x, self.y)
         
     def draw(self, win, x, y):
-        draw(win, self.glyph, x, y)
+        draw(win, self.glyph, pos.x, pos.y)
 
     def tile_pos(self):
         if isinstance(self.x, int):
@@ -100,6 +101,7 @@ class Object(object):
         t = tile(x,y)
         return t and self.can_pass(t)
         
+    # subclasses can override this
     def can_pass(self, tile):
         assert tile
         return not tile.solid
@@ -112,10 +114,27 @@ class Object(object):
         self.attach()
         
     def try_move(self, x, y):
-        assert self.attached()
+        if not self.attached():
+            return False
+
+        result = False
+        
+        # move incrementally to prevent tunneling
+        if isinstance(self.x, float):
+            while True:
+                d = euclid.Vector2(x,y)
+                if d.magnitude() <= 1.0:
+                    break
+                d.normalize()
+                result = self.try_move(d.x, d.y)
+                if not result:
+                    return result
+                (x,y) = (x - d.x, y - d.y)
+
+        if not self.attached():
+            return False
         
         target = self.immediate_tile(x, y)
-        result = False
         if target and self.can_pass(target):
             self.detach()
             self.x += x
@@ -127,12 +146,12 @@ class Object(object):
 
         if result and len(target.objects) > 1:
             post_signal = Signal()
-            for p in itertools.combinations(target.objects, 2):
+            obj_list = target.objects
+            for p in itertools.combinations(obj_list, 2):
                 p[0].on_collision(p[1], post_signal)
                 p[1].on_collision(p[0], post_signal)
             post_signal()
 
-        assert self.attached()
         return result
     
     def move(self, x, y):
@@ -254,7 +273,7 @@ class Player(Object):
         speed = 20.0
         self.world.spawn(
             "bullet",
-            pos=(1.0*(self.x + self.dir[0]), 1.0*(self.y + self.dir[1])),
+            pos=(1.0*self.x, 1.0*self.y),
             vel=(self.dir[0]*1.0*speed,self.dir[1]*1.0*speed)
         )
     
@@ -277,8 +296,19 @@ class Bullet(Object):
     def __init__(self, name, glyph, world, **kwargs):
         super(self.__class__, self).__init__(name, glyph, world, **kwargs)
         self.obvious = True
+        self.on_collision.connect(self.collision)
+    
+    def collision(self, other, post_signal):
+        post_signal.connect(lambda:
+            self.detach()
+        )
+            
     def tick(self, t):
-        self.move(self.vx * t, self.vy * t)
+        if not self.attached():
+            return
+        
+        if not self.try_move(self.vx * t, self.vy * t):
+            self.detach()
     
 class Item(Object):
     def __init__(self, name, glyph, world, **kwargs):
@@ -288,6 +318,12 @@ class Monster(Object):
     def __init__(self, name, glyph, world, **kwargs):
         super(self.__class__, self).__init__(name, glyph, world, **kwargs)
         self.speed = kwargs.get("speed", 0.0)
+        self.on_collision.connect(self.collision)
+    def collision(self, other, post_signal):
+        if other.__class__.__name__ == 'Bullet':
+            post_signal.connect(lambda:
+                self.detach()
+            )
     def tick(self, t):
         if not self.attached():
             return
@@ -502,14 +538,16 @@ def interface_logic(win, player):
         player.shoot()
     return True
 
-def hud_render(win, view, player):
+def hud_render(win, player):
+    win_sz = win.getmaxyx()[::-1]
+    
     t = player.thinking()
     if t:
         ft = " %s " % t 
-        win.addstr(2, view[0] + view[2]/2 - len(t)/2, ft, curses.color_pair(11))
-    win.addstr(view[1]+view[3], 1, player.world.name)
+        win.addstr(2, 1 + win_sz[0]/2 - len(t)/2, ft, curses.color_pair(11))
+    win.addstr(win_sz[1]-2, 1, player.world.name)
     status = "Gold: %s | HP %s / 100" % (player.gold, player.hp)
-    win.addstr(view[1]+view[3], view[0]+view[2]-len(status), status)
+    win.addstr(win_sz[1]-2, win_sz[0]-len(status)-1, status)
 
 def game(win):
     win_sz = win.getmaxyx()[::-1]
@@ -614,7 +652,13 @@ def game(win):
         
         # calculate view and camera values based on term size
         win_sz = win.getmaxyx()[::-1] # window size (in chars)
-        view = [1, 1, win_sz[0] - 2, win_sz[1] - 3] # (view x,y,w,h)
+        
+        max_size = [20,20]
+        capped_size = [min(max_size[0],win_sz[0] - 2), min(max_size[1],win_sz[1] - 3)]
+        
+        view = [1, 1, capped_size[0], capped_size[1]] # (view x,y,w,h)
+        view[0] += win_sz[0]/2 - view[2]/2
+        view[1] += win_sz[1]/2 - view[3]/2
 
         # x,y position where to start rendering our map
         camera = [player.x - view[2]/2, player.y - view[3]/2]
@@ -624,7 +668,7 @@ def game(win):
         world.render(win, camera, view)
 
         # draw HUD
-        hud_render(win, view, player)
+        hud_render(win, player)
         
         # draw border
         win.box()
