@@ -700,7 +700,7 @@ def game(win):
     #)
 
     world.sprinkle(
-        lambda **kwargs: Monster("monster", MONSTER, world, speed=random.random()*1.0, **kwargs),
+        lambda **kwargs: Monster("monster", MONSTER, world, speed=random.random()*2.0, **kwargs),
         0.01
     )
     world.sprinkle(
