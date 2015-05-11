@@ -10,6 +10,12 @@ import euclid
 
 random.seed()
 
+msgs = []
+
+def log(msg):
+    global msgs
+    msgs.append(msg)
+
 class Glyph:
     def __init__(self,name,string,color,**kwargs):
         self.name = name
@@ -144,7 +150,8 @@ class Object(object):
 
         self.on_try_move(x, y, result)
 
-        if result and len(target.objects) > 1:
+        # target can be null here, even if result is True
+        if target and result and len(target.objects) > 1:
             post_signal = Signal()
             obj_list = target.objects
             for p in itertools.combinations(obj_list, 2):
@@ -269,11 +276,28 @@ class Player(Object):
         t = self.current_tile()
         return t and t.conceal
 
+    def swing(self):
+        speed = 20.0
+        # sword swing travels 90deg clockwise player dir
+        dirs = [[0,1], [-1,0], [0,-1], [1,0]]
+        assert type(self.dir) == type([])
+        idx = dirs.index(self.dir)
+        idx += 1
+        d = dirs[0 if idx == 4 else idx] # wrap around
+        s = self.world.spawn(
+            "sword",
+            pos=(
+                1.0*(self.x+self.dir[0]-2*d[0]),
+                1.0*(self.y+self.dir[1]-2*d[1])
+            ),
+            vel=(d[0]*1.0*speed,d[1]*1.0*speed)
+        )
+
     def shoot(self):
         speed = 20.0
         self.world.spawn(
             "bullet",
-            pos=(1.0*self.x, 1.0*self.y),
+            pos=(self.x, self.y),
             vel=(self.dir[0]*1.0*speed,self.dir[1]*1.0*speed)
         )
     
@@ -287,11 +311,71 @@ class Player(Object):
         elif y > 0:
             self.glyph.string = 'v'
 
-        self.dir = (x, y)
+        self.dir = [x, y]
 
     def tick(self, t):
         self.update_targets()
 
+class Sword(Object):
+    def __init__(self, name, glyph, world, **kwargs):
+        super(self.__class__, self).__init__(name, glyph, world, **kwargs)
+        self.obvious = True
+        self.on_collision.connect(self.collision)
+
+        # get direction from normalized velocity
+        dir = euclid.Vector2(self.vx, self.vy)
+        self.speed = dir.magnitude()
+        dir.normalize()
+        self.dir = [int(round(dir.x)), int(round((dir.y)))]
+        
+        # direction -> animation glyph sequence
+        self.animation = {
+            #(0,1): ['\\', '|', '/'],
+            #(-1,0): ['/', '-', '\\'],
+            #(0,-1): ['\\', '|', '/'],
+            #(1,0): ['/', '-', '\\']
+            
+            (-1,0): ['\\', '|', '/'],
+            (0,-1): ['/', '-', '\\'],
+            (1,0): ['\\', '|', '/'],
+            (0,1): ['/', '-', '\\']
+        }
+        # we use tuples since they can be dict keys
+        
+        self.timer = 0.0
+        self.frametime = 1.0 / self.speed
+
+    def update_animation(self, t):
+        self.timer += t
+        frame = int(self.timer / self.frametime)
+        if frame < 3:
+            glyph_name = self.animation[tuple(self.dir)][frame]
+            self.glyph = self.world.glyph(glyph_name)
+            return True
+        else:
+            return False
+    
+    def collision(self, other, post_signal):
+        post_signal.connect(lambda:
+            self.detach()
+        )
+        
+    def can_pass(self, tile):
+        assert self.attached()
+        return True
+        
+    def tick(self, t):
+        if not self.attached():
+            return
+        
+        if not self.try_move(self.vx * t, self.vy * t):
+            self.detach()
+            return
+
+        if not self.update_animation(t):
+            self.detach()
+            return
+    
 class Bullet(Object):
     def __init__(self, name, glyph, world, **kwargs):
         super(self.__class__, self).__init__(name, glyph, world, **kwargs)
@@ -321,6 +405,10 @@ class Monster(Object):
         self.on_collision.connect(self.collision)
     def collision(self, other, post_signal):
         if other.__class__.__name__ == 'Bullet':
+            post_signal.connect(lambda:
+                self.detach()
+            )
+        elif other.__class__.__name__ == 'Sword':
             post_signal.connect(lambda:
                 self.detach()
             )
@@ -535,7 +623,7 @@ def interface_logic(win, player):
     elif ch == ord('l') or ch == curses.KEY_RIGHT:
         player.try_move(1,0)
     elif ch == ord(' '):
-        player.shoot()
+        player.swing()
     return True
 
 def hud_render(win, player):
@@ -585,18 +673,24 @@ def game(win):
     BULLET = world.glyph('bullet', "\'", 9)
     curses.init_pair(9, curses.COLOR_RED, curses.COLOR_BLACK)
 
+    SWORD = world.glyph('\\', "\\", 10)
+    world.glyph('|', "|", 10)
+    world.glyph('-', "-", 10)
+    world.glyph('/', "/", 10)
+    curses.init_pair(10, curses.COLOR_WHITE, curses.COLOR_BLACK)
+
     DOOR_H = world.glyph('door_h', '-', 4)
     DOOR_V = world.glyph('door_v', '|', 4)
     WALL = world.glyph('wall', 'H', 4)
     FENCE = world.glyph('fence', '#', 4)
     
-    NOTHING = world.glyph('nothing', 'X',10)
+    curses.init_pair(11, curses.COLOR_WHITE, curses.COLOR_BLACK)
+    NOTHING = world.glyph('nothing', 'X',11)
 
     world.sprinkle(ROCK, 0.01, solid=True)
     world.sprinkle(BUSH, 0.02, conceal=True)
     world.sprinkle(TREE, 0.02, solid=True)
     
-    curses.init_pair(10, curses.COLOR_RED, curses.COLOR_BLACK)
     curses.init_pair(11, curses.COLOR_YELLOW, curses.COLOR_BLACK)
     #world.structure(
     #    theme="inside"
@@ -620,6 +714,10 @@ def game(win):
     world.register_object_factory(
         "bullet",
         lambda **kwargs: Bullet("bullet", BULLET, world, **kwargs)
+    )
+    world.register_object_factory(
+        "sword",
+        lambda **kwargs: Sword("sword", SWORD, world, **kwargs)
     )
 
     player = Player("Player", copy.deepcopy(PLAYER), world)
@@ -687,6 +785,10 @@ def game(win):
         # game state termination
         if player.hp <= 0:
             return "You are dead."
+
+        global msgs
+        if msgs:
+            return msgs
 
 if __name__=='__main__':
     curses.wrapper(main)
