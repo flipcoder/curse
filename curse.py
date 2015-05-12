@@ -43,6 +43,37 @@ class Signal:
     def connect(self, cb):
         self.slots += [cb]
 
+class Alarm:
+
+    # length: float value in seconds
+    # event (opt): elapse callback (or list of)
+    def __init__(self, length, event=None):
+        self.time = 0
+        self.length = length
+        
+        self.signal = Signal()
+
+        self.done = False
+
+        if event:
+            if type(event) == type([]):
+                for ev in event:
+                    self.signal.connect(ev)
+            else:
+                self.signal.connect(ev)
+    
+    def elapsed(self):
+        return self.done
+    
+    # advance alarm by float value t in seconds
+    def tick(self, t):
+        if not self.done:
+            self.time += t
+            if self.time > self.length:
+                self.signal()
+                self.done = True
+        return self.done
+
 class Object(object):
     def __init__(self, name, glyph, world, **kwargs):
         assert name
@@ -684,14 +715,14 @@ def game(win):
     WALL = world.glyph('wall', 'H', 4)
     FENCE = world.glyph('fence', '#', 4)
     
-    curses.init_pair(11, curses.COLOR_WHITE, curses.COLOR_BLACK)
+    curses.init_pair(11, curses.COLOR_RED, curses.COLOR_BLACK)
     NOTHING = world.glyph('nothing', 'X',11)
 
     world.sprinkle(ROCK, 0.01, solid=True)
     world.sprinkle(BUSH, 0.02, conceal=True)
     world.sprinkle(TREE, 0.02, solid=True)
     
-    curses.init_pair(11, curses.COLOR_YELLOW, curses.COLOR_BLACK)
+    curses.init_pair(12, curses.COLOR_YELLOW, curses.COLOR_BLACK)
     #world.structure(
     #    theme="inside"
     #    wall=WALL,
