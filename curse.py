@@ -192,13 +192,6 @@ class Object(object):
 
         return result
     
-    def move(self, x, y):
-        assert self.attached()
-        self.detach()
-        self.x += x
-        self.y += y
-        self.attach()
-
     def teleport(self, x, y):
         self.detach()
         self.x = x
