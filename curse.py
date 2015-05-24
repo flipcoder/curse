@@ -40,8 +40,9 @@ class Signal:
     def __call__(self, *args):
         for slot in self.slots:
             slot(*args)
-    def connect(self, cb):
+    def __iadd__(self, cb):
         self.slots += [cb]
+        return self
 
 class Alarm:
 
@@ -58,9 +59,9 @@ class Alarm:
         if event:
             if type(event) == type([]):
                 for ev in event:
-                    self.signal.connect(ev)
+                    self.signal += ev
             else:
-                self.signal.connect(ev)
+                self.signal += ev
     
     def elapsed(self):
         return self.done
@@ -242,8 +243,8 @@ class Player(Object):
     def __init__(self, name, glyph, world, **kwargs):
         super(self.__class__, self).__init__(name, glyph, world, **kwargs)
         self.hp = 100
-        self.on_try_move.connect(self.orient)
-        self.on_collision.connect(self.collision)
+        self.on_try_move += self.orient
+        self.on_collision += self.collision
         self.dir = [0,1]
         self.last_target = ""
         self.gold = 0
@@ -257,16 +258,12 @@ class Player(Object):
             if other.name == 'gold coin':
                 self.gold += 10
                 self.last_pickup = other.name
-                post_signal.connect(lambda:
-                    other.detach()
-                )
+                post_signal += lambda: other.detach()
             elif other.name == 'health kit':
                 #self.hp += min(self.hp + 25, 100)
                 self.hp = 100
                 self.last_pickup = other.name
-                post_signal.connect(lambda:
-                    other.detach()
-                )
+                post_signal += lambda: other.detach()
 
     def thinking(self):
         if self.hiding():
@@ -344,7 +341,7 @@ class Sword(Object):
     def __init__(self, name, glyph, world, **kwargs):
         super(self.__class__, self).__init__(name, glyph, world, **kwargs)
         self.obvious = True
-        self.on_collision.connect(self.collision)
+        self.on_collision += self.collision
 
         # get direction from normalized velocity
         dir = euclid.Vector2(self.vx, self.vy)
@@ -380,9 +377,7 @@ class Sword(Object):
             return False
     
     def collision(self, other, post_signal):
-        post_signal.connect(lambda:
-            self.detach()
-        )
+        post_signal += lambda: self.detach()
         
     def can_pass(self, tile):
         assert self.attached()
@@ -404,12 +399,10 @@ class Bullet(Object):
     def __init__(self, name, glyph, world, **kwargs):
         super(self.__class__, self).__init__(name, glyph, world, **kwargs)
         self.obvious = True
-        self.on_collision.connect(self.collision)
+        self.on_collision += self.collision
     
     def collision(self, other, post_signal):
-        post_signal.connect(lambda:
-            self.detach()
-        )
+        post_signal += lambda: self.detach()
             
     def tick(self, t):
         if not self.attached():
@@ -426,16 +419,13 @@ class Monster(Object):
     def __init__(self, name, glyph, world, **kwargs):
         super(self.__class__, self).__init__(name, glyph, world, **kwargs)
         self.speed = kwargs.get("speed", 0.0)
-        self.on_collision.connect(self.collision)
+        self.on_collision += self.collision
     def collision(self, other, post_signal):
         if other.__class__.__name__ == 'Bullet':
-            post_signal.connect(lambda:
-                self.detach()
-            )
+            post_signal += lambda: self.detach()
         elif other.__class__.__name__ == 'Sword':
-            post_signal.connect(lambda:
-                self.detach()
-            )
+            post_signal += lambda: self.detach()
+    
     def tick(self, t):
         if not self.attached():
             return
