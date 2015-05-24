@@ -26,14 +26,6 @@ class Glyph:
 def draw(win, glyph, x, y):
     win.addstr(y, x, glyph.string, glyph.color)
 
-class Wrapper:
-    def __init__(self, value):
-        self.value = value
-    def get():
-        return self.value
-    def set(val):
-        self.value = val
-    
 class Signal:
     def __init__(self):
         self.slots = []
