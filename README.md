@@ -8,5 +8,5 @@ MIT License. See LICENSE for full information.
 
 The requirements.txt file contains the libraries you need to install using pip
 
-NOTE: Windows users will need to also install [curses](http://www.lfd.uci.edu/~gohlke/pythonlibs/vu4hx7yr/curses-2.2-cp27-none-win32.whl)
+NOTE: Windows users will need to also install [curses](http://www.lfd.uci.edu/~gohlke/pythonlibs/)
 
