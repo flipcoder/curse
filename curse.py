@@ -271,7 +271,7 @@ class Player(Object):
         tile = self.immediate_tile(self.dir[0], self.dir[1])
         target = ""
         if tile:
-            objs = filter(lambda o: not o.obvious, tile.objects)
+            objs = list(filter(lambda o: not o.obvious, tile.objects))
             if objs:
                 target = self.last_target = \
                     ("" if objs[0].plural else "a ") + \
@@ -453,9 +453,9 @@ class Map:
         self.h = h
         line = []
         self.grid = []
-        for t in xrange(w):
+        for t in range(w):
             line.append(Tile(fill, obvious=True))
-        for t in xrange(h):
+        for t in range(h):
             self.grid.append(copy.deepcopy(line))
         
         self.nothing_glyph = None
@@ -515,10 +515,10 @@ class Map:
         else: # treat freq as likelihood
             count = int(freq * self.w * self.h)
         
-        if isinstance(factory, basestring):
+        if isinstance(factory, str):
             factory = object_factories[factory]
         
-        for i in xrange(count):
+        for i in range(count):
             p = factory(**kwargs)
             self.ensure_object(p)
             p.random_teleport()
@@ -566,8 +566,8 @@ class Map:
         
     def render(self, win, camera, view):
         # render visible map region based on camera and viewport
-        for ix in xrange(0,view[2]):
-            for iy in xrange(0,view[3]):
+        for ix in range(0,view[2]):
+            for iy in range(0,view[3]):
                 # adding camera coords transforms us into world space
                 # use world space coords to get tile, null if out of range
                 tile = self.tile(ix + camera[0], iy + camera[1])
@@ -595,7 +595,7 @@ def main(win):
         
         win_sz = win.getmaxyx()[::-1]
         msg = " %s -- (r)etry / (q)uit? " % msg
-        win.addstr(win_sz[1]/2, win_sz[0]/2 - len(msg)/2, msg)
+        win.addstr(win_sz[1]//2, win_sz[0]//2 - len(msg)//2, msg)
         win.refresh()
         
         op = ""
@@ -638,7 +638,7 @@ def hud_render(win, player):
     t = player.thinking()
     if t:
         ft = " %s " % t 
-        win.addstr(2, 1 + win_sz[0]/2 - len(t)/2, ft, curses.color_pair(11))
+        win.addstr(2, 1 + win_sz[0]//2 - len(t)//2, ft, curses.color_pair(11))
     win.addstr(win_sz[1]-2, 1, player.world.name)
     status = "Gold: %s | HP %s / 100" % (player.gold, player.hp)
     win.addstr(win_sz[1]-2, win_sz[0]-len(status)-1, status)
@@ -649,7 +649,7 @@ def game(win):
     win.box()
     
     text = "Loading..."
-    win.addstr(win_sz[1]/2, win_sz[0]/2 - len(text)/2, text)
+    win.addstr(win_sz[1]//2, win_sz[0]//2 - len(text)//2, text)
     win.refresh()
     
     PLAYER = Glyph('player', 'v', 1)
@@ -761,11 +761,11 @@ def game(win):
         capped_size = [min(max_size[0],win_sz[0] - 2), min(max_size[1],win_sz[1] - 3)]
         
         view = [1, 1, capped_size[0], capped_size[1]] # (view x,y,w,h)
-        view[0] += win_sz[0]/2 - view[2]/2
-        view[1] += win_sz[1]/2 - view[3]/2
+        view[0] += win_sz[0]//2 - view[2]//2
+        view[1] += win_sz[1]//2 - view[3]//2
 
         # x,y position where to start rendering our map
-        camera = [player.x - view[2]/2, player.y - view[3]/2]
+        camera = [player.x - view[2]//2, player.y - view[3]//2]
         
         win.erase()
 
@@ -784,7 +784,7 @@ def game(win):
         player.tick(advance)
 
         # object logic
-        world.objects = filter(lambda obj: obj.attached(), world.objects)
+        world.objects = list(filter(lambda obj: obj.attached(), world.objects))
         for obj in world.objects:
             obj.tick(advance)
         
